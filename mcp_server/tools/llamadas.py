@@ -48,21 +48,6 @@ async def registrar_llamada(
 
 
 @mcp.tool()
-async def escalar_llamada(motivo: str) -> str:
-    """Transfiere la llamada actual a un operador humano. Registra el motivo de la escalada.
-    Usar cuando: la confianza del agente es baja, la situacion es compleja, hay una emergencia
-    o la conversacion es conflictiva."""
-    if not motivo.strip():
-        return "Debe indicar el motivo de la escalada."
-
-    return (
-        f"Llamada transferida a un operador humano. "
-        f"Motivo de la escalada: {motivo.strip()}. "
-        f"Un agente se pondra en contacto en breve."
-    )
-
-
-@mcp.tool()
 async def finalizar_llamada() -> str:
     """Finaliza la llamada actual. Debe usarse solo tras despedirse del abonado
     y haber registrado la llamada con registrar_llamada."""

@@ -148,8 +148,9 @@ de contacto para que le informemos de la resolucion?"
 - Una herramienta falla dos veces seguidas.
 
 ## Como hacerlo:
-1. Avisa: "Voy a ponerle en contacto con un companero que podra ayudarle con esta gestion. Un momento, por favor."
-2. Llama a `escalar_llamada(motivo=...)` con un resumen claro del motivo.
+1. Llama a `registrar_llamada` con el resumen, motivo y `estado="Escalada"`, `human_handoff=True`.
+2. Avisa: "Voy a ponerle en contacto con un companero que podra ayudarle con esta gestion. Un momento, por favor."
+3. Llama a `escalar_llamada` para transferir al operador.
 
 ---
 
