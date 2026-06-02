@@ -27,8 +27,8 @@ services:
       - db
     environment:
       - DATABASE_URL=postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
-    expose:
-      - "3000"
+    ports:
+      - "8080:8080"
 
 volumes:
   postgres_data:
