@@ -1,0 +1,41 @@
+Espina y Delfin S.A. — Informacion General
+
+Datos de la empresa
+Nombre: Espina y Delfin, S.A.
+CIF: A12345678
+Servicio: Suministro y gestion de agua potable y saneamiento.
+Municipios atendidos: Villanueva, Aldeanueva y pedanias.
+
+Oficina de atencion al publico
+Direccion: Calle Mayor 100, 28001 Villanueva.
+Horario: Lunes a viernes de 9:00 a 14:00.
+Telefono de atencion: 900 123 456 (gratuito).
+
+Telefono de averias y emergencias
+Disponible 24 horas: 900 654 321.
+
+Formas de pago de recibos
+Domiciliacion bancaria (recomendado).
+En oficinas de la empresa en horario de atencion.
+Mediante transferencia bancaria al numero de cuenta indicado en el recibo.
+
+Tarifas vigentes (orientativas)
+Domestica: cuota fija trimestral mas consumo por tramos.
+Comercial: cuota fija trimestral mas consumo lineal.
+Social: tarifa reducida para familias en situacion vulnerable. Consultar requisitos en oficinas.
+
+Lectura de contadores
+Periodicidad: trimestral.
+En caso de lectura estimada, se regulariza en la siguiente lectura real.
+Si detecta una lectura anomala, puede solicitar revision llamando al 900 123 456.
+
+Politica de cortes por impago
+Primer aviso: tras 30 dias de impago.
+Segundo aviso con notificacion formal: tras 60 dias.
+Corte de suministro: a partir de 90 dias, previa notificacion.
+Reposicion del servicio: tras liquidar la deuda pendiente y abonar la tasa de reposicion.
+
+Mantenimientos programados
+Los cortes programados se comunican con un minimo de 48 horas de antelacion.
+Horario habitual de mantenimiento: de 8:00 a 14:00 en dias laborables.
+Puede consultar cortes programados llamando al 900 123 456 o en nuestra web.

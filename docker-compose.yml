@@ -1,0 +1,25 @@
+services:
+  db:
+    build: ./database
+    restart: always
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+    ports:
+      - "${DB_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  mcp_server:
+    build: ./mcp_server
+    depends_on:
+      - db
+    environment:
+      - DATABASE_URL=postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      - MCP_API_KEY=${MCP_API_KEY}
+    ports:
+      - "${MCP_PORT}:8000"
+
+volumes:
+  postgres_data:
