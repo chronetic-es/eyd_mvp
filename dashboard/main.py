@@ -24,26 +24,26 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 pool: asyncpg.Pool | None = None
 
 
-async def _create_pool(max_retries: int = 10) -> asyncpg.Pool | None:
-    """Try to create the DB connection pool with incremental backoff."""
-    for attempt in range(1, max_retries + 1):
+async def _connect_db_background():
+    """Try to create the DB pool in background with retries — doesn't block startup."""
+    global pool
+    for attempt in range(1, 11):
         try:
-            p = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=5)
+            pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=5)
             logger.info("Connected to database (attempt %d)", attempt)
-            return p
+            return
         except Exception as exc:
-            logger.warning("DB connection attempt %d/%d failed: %s", attempt, max_retries, exc)
-            if attempt < max_retries:
-                await asyncio.sleep(attempt)  # 1s, 2s, 3s ...
-    logger.error("Could not connect to database after %d attempts — starting without DB", max_retries)
-    return None
+            logger.warning("DB connection attempt %d/10 failed: %s", attempt, exc)
+            await asyncio.sleep(2)
+    logger.error("Could not connect to database after 10 attempts")
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global pool
-    pool = await _create_pool()
+    task = asyncio.create_task(_connect_db_background())
+    logger.info("App started — DB connection running in background")
     yield
+    task.cancel()
     if pool:
         await pool.close()
         logger.info("Database pool closed")
