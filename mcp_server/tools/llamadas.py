@@ -45,10 +45,3 @@ async def registrar_llamada(
         return "Error al registrar la llamada. Por favor, intentelo de nuevo."
     finally:
         await conn.close()
-
-
-@mcp.tool()
-async def finalizar_llamada() -> str:
-    """Finaliza la llamada actual. Debe usarse solo tras despedirse del abonado
-    y haber registrado la llamada con registrar_llamada."""
-    return "Llamada finalizada correctamente."
