@@ -1,108 +1,57 @@
-import os
-
-import asyncpg
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+import asyncio
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from queries import (
-    get_calls_overview, get_calls_by_motive, get_calls_timeline,
-    get_active_incidents, get_incident_zones,
-    get_billing_summary, get_overdue_bills, get_active_expedients,
-    get_work_orders_summary, get_recent_work_orders,
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+import db
+from routers import (
+    abonados, analytics, contratos, direcciones, expedientes,
+    facturacion, incidencias, llamadas, meta, partes,
 )
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
-
-app = FastAPI(title="EYD Dashboard")
-
-pool: asyncpg.Pool | None = None
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("dashboard")
 
 
-@app.on_event("startup")
-async def startup():
-    global pool
-    pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=5)
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    task = asyncio.create_task(db.connect_with_retries())
+    logger.info("App started — DB connection running in background")
+    yield
+    task.cancel()
+    await db.close_pool()
 
 
-@app.on_event("shutdown")
-async def shutdown():
-    if pool:
-        await pool.close()
-
-
-# ─── CALLS ───────────────────────────────────────────────
-
-@app.get("/api/calls/overview")
-async def calls_overview():
-    async with pool.acquire() as conn:
-        return await get_calls_overview(conn)
-
-
-@app.get("/api/calls/motives")
-async def calls_motives():
-    async with pool.acquire() as conn:
-        return await get_calls_by_motive(conn)
-
-
-@app.get("/api/calls/timeline")
-async def calls_timeline():
-    async with pool.acquire() as conn:
-        return await get_calls_timeline(conn)
-
-
-# ─── INCIDENTS ───────────────────────────────────────────
-
-@app.get("/api/incidents/active")
-async def incidents_active():
-    async with pool.acquire() as conn:
-        return await get_active_incidents(conn)
-
-
-@app.get("/api/incidents/zones")
-async def incidents_zones():
-    async with pool.acquire() as conn:
-        return await get_incident_zones(conn)
-
-
-# ─── BILLING ─────────────────────────────────────────────
-
-@app.get("/api/billing/summary")
-async def billing_summary():
-    async with pool.acquire() as conn:
-        return await get_billing_summary(conn)
-
-
-@app.get("/api/billing/overdue")
-async def billing_overdue():
-    async with pool.acquire() as conn:
-        return await get_overdue_bills(conn)
-
-
-@app.get("/api/billing/expedients")
-async def billing_expedients():
-    async with pool.acquire() as conn:
-        return await get_active_expedients(conn)
-
-
-# ─── WORK ORDERS ─────────────────────────────────────────
-
-@app.get("/api/work-orders/summary")
-async def work_orders_summary():
-    async with pool.acquire() as conn:
-        return await get_work_orders_summary(conn)
-
-
-@app.get("/api/work-orders/recent")
-async def work_orders_recent():
-    async with pool.acquire() as conn:
-        return await get_recent_work_orders(conn)
-
-
-# ─── STATIC FILES ────────────────────────────────────────
+app = FastAPI(title="EYD Dashboard", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+@app.get("/health")
+async def health():
+    db_ok = False
+    pool = db.get_pool()
+    if pool:
+        try:
+            async with pool.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+            db_ok = True
+        except Exception:
+            pass
+    return {"status": "ok", "db": db_ok}
+
+
+# ─── API ROUTERS ─────────────────────────────────────────
+for r in (analytics, abonados, direcciones, contratos, facturacion,
+          expedientes, incidencias, partes, llamadas, meta):
+    app.include_router(r.router)
+
+
+# ─── STATIC FRONTEND ─────────────────────────────────────
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
