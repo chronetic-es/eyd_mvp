@@ -17,6 +17,15 @@ def validar_telefono(telefono: str) -> str | None:
     return None
 
 
+def normalizar_telefono(telefono: str) -> str:
+    """Devuelve solo los digitos del numero nacional (ultimos 9), ignorando prefijos."""
+    digitos = "".join(c for c in telefono if c.isdigit())
+    # Quita prefijo internacional español si viene como 0034...
+    if digitos.startswith("0034"):
+        digitos = digitos[4:]
+    # Nos quedamos con los ultimos 9 digitos (numero nacional ES)
+    return digitos[-9:]
+
 def formatear_precio(valor: float) -> str:
     """Convierte un precio decimal a texto legible por TTS."""
     centimos_total = round(valor * 100)
