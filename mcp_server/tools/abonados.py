@@ -2,7 +2,7 @@ from datetime import date, timedelta
 
 from instance import mcp
 from db import obtener_conexion_db
-from validators import validar_nif, validar_telefono
+from validators import validar_nif, validar_telefono, normalizar_telefono
 
 _DIAS_ES = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
 _MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
@@ -97,17 +97,17 @@ async def buscar_abonado_por_telefono(telefono: str) -> str:
     error = validar_telefono(telefono)
     if error:
         return error
-
     conn = await obtener_conexion_db()
     try:
+        tel_norm = normalizar_telefono(telefono)
         entidad = await conn.fetchrow(
             "SELECT id, nif, nombre, apellidos, telefono, dir_fiscal "
-            "FROM entidades WHERE telefono = $1",
-            telefono.strip(),
+            "FROM entidades "
+            "WHERE right(regexp_replace(telefono, '\\D', '', 'g'), 9) = $1",
+            tel_norm,
         )
         if not entidad:
             return "No se ha encontrado ningun abonado con ese numero de telefono."
-
         contratos = await conn.fetch(
             """
             SELECT c.id, c.numero_contrato, c.estado, c.fecha_alta,
@@ -119,14 +119,12 @@ async def buscar_abonado_por_telefono(telefono: str) -> str:
             """,
             entidad["id"],
         )
-
         info = (
             f"Abonado encontrado. ID: {entidad['id']}. "
             f"Nombre: {entidad['nombre']} {entidad['apellidos']}. "
             f"NIF: {entidad['nif']}. Telefono: {entidad['telefono']}. "
             f"Direccion fiscal: {entidad['dir_fiscal']}."
         )
-
         if contratos:
             partes = []
             for c in contratos:
@@ -139,13 +137,11 @@ async def buscar_abonado_por_telefono(telefono: str) -> str:
             info += f" Tiene {len(contratos)} contrato{'s' if len(contratos) > 1 else ''}. " + ". ".join(partes) + "."
         else:
             info += " No tiene contratos asociados."
-
         return info
     except Exception:
         return "Error al buscar el abonado. Por favor, intentelo de nuevo."
     finally:
         await conn.close()
-
 
 @mcp.tool()
 async def buscar_abonado_por_direccion(direccion: str) -> str:
