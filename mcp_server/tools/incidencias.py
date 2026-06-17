@@ -1,6 +1,6 @@
 from instance import mcp
 from db import obtener_conexion_db
-from validators import validar_tipo_incidencia
+from validators import validar_tipo_incidencia, generar_numero_parte
 
 
 @mcp.tool()
@@ -174,14 +174,23 @@ async def crear_incidencia(
     zona_calle: str = "",
     zona_cod_postal: str = "",
     zona_municipio: str = "",
+    contrato_id: int = 0,
+    generar_parte: bool = True,
+    descripcion_parte: str = "",
 ) -> str:
-    """Crea una nueva incidencia en el sistema.
+    """Crea una nueva incidencia y, salvo que se indique lo contrario, su parte de trabajo
+    asociado, todo de forma atomica (o se crean ambos o ninguno).
     tipo: Averia, Corte_programado, Corte_impago, Fuga.
     direccion_suministro_ids: IDs de direcciones concretas afectadas separados por coma (opcional).
+    contrato_id: para una incidencia que afecta solo al domicilio de un abonado concreto (ej: Flujo B,
+      falta de agua sin causa conocida). La incidencia se acota a la direccion de suministro de ese
+      contrato, sin afectar a vecinos.
     Para una incidencia de ambito general (afecta a todos los abonados de una zona), indica:
     zona_calle: nombre de la calle afectada (ej: 'Calle del Rio'); usa zona_municipio para acotarla.
     zona_cod_postal: codigo postal afectado (ej: '28002').
     zona_municipio: municipio afectado (ej: 'Villanueva'); si se indica sin zona_calle, afecta a todo el municipio.
+    generar_parte: si es True (por defecto), crea tambien un parte de trabajo vinculado a la incidencia.
+    descripcion_parte: descripcion del parte (si se omite, se usa la de la incidencia).
     Cualquier abonado cuya direccion de suministro caiga dentro de la zona quedara afectado."""
     error = validar_tipo_incidencia(tipo)
     if error:
@@ -211,8 +220,31 @@ async def crear_incidencia(
     try:
         from datetime import date, datetime
 
+        # --- Validate ALL references BEFORE opening the transaction (atomicity) ---
+        for did in dir_ids:
+            exists = await conn.fetchval(
+                "SELECT id FROM direcciones_suministro WHERE id = $1", did
+            )
+            if not exists:
+                return f"No se ha encontrado la direccion de suministro con ID {did}."
+
+        contrato_dir_id = None
+        if contrato_id:
+            contrato_dir_id = await conn.fetchval(
+                "SELECT direccion_suministro_id FROM contratos WHERE id = $1", contrato_id
+            )
+            if not contrato_dir_id:
+                return f"No se ha encontrado el contrato con ID {contrato_id}."
+
+        # Address to link + use as the work order's location (contract address takes priority)
+        direcciones_a_enlazar = list(dict.fromkeys(
+            ([contrato_dir_id] if contrato_dir_id else []) + dir_ids
+        ))
+        direccion_parte = contrato_dir_id or (dir_ids[0] if dir_ids else None)
+
         hoy = date.today()
         ahora = datetime.now().time()
+        numero_parte = None
 
         async with conn.transaction():
             inc_id = await conn.fetchval(
@@ -224,13 +256,7 @@ async def crear_incidencia(
                 tipo, hoy, ahora, descripcion.strip(),
             )
 
-            for did in dir_ids:
-                # Verify address exists
-                exists = await conn.fetchval(
-                    "SELECT id FROM direcciones_suministro WHERE id = $1", did
-                )
-                if not exists:
-                    return f"No se ha encontrado la direccion de suministro con ID {did}."
+            for did in direcciones_a_enlazar:
                 await conn.execute(
                     "INSERT INTO incidencia_direcciones (incidencia_id, direccion_suministro_id) VALUES ($1, $2)",
                     inc_id, did,
@@ -242,19 +268,33 @@ async def crear_incidencia(
                     inc_id, ambito, valor, municipio,
                 )
 
+            if generar_parte:
+                ultimo = await conn.fetchval("SELECT COALESCE(MAX(id), 0) FROM partes_trabajo")
+                numero_parte = generar_numero_parte(ultimo + 1)
+                desc_pt = descripcion_parte.strip() or descripcion.strip()
+                await conn.execute(
+                    """
+                    INSERT INTO partes_trabajo (numero_parte, direccion_suministro_id, incidencia_id, descripcion)
+                    VALUES ($1, $2, $3, $4)
+                    """,
+                    numero_parte, direccion_parte, inc_id, desc_pt,
+                )
+
         dirs_msg = ""
-        if dir_ids:
-            dirs_msg = f" Se han vinculado {len(dir_ids)} direccion{'es' if len(dir_ids) > 1 else ''} concreta{'s' if len(dir_ids) > 1 else ''}."
+        if direcciones_a_enlazar:
+            n = len(direcciones_a_enlazar)
+            dirs_msg = f" Se ha{'n' if n > 1 else ''} vinculado {n} direccion{'es' if n > 1 else ''} concreta{'s' if n > 1 else ''}."
         zonas_msg = ""
         if zonas:
             desc_zonas = "; ".join(
                 f"{a.lower()} {v}" + (f" ({m})" if m else "") for a, v, m in zonas
             )
             zonas_msg = f" Ambito general afectado: {desc_zonas}."
+        parte_msg = f" Se ha generado el parte de trabajo {numero_parte}." if numero_parte else ""
 
         return (
             f"Incidencia creada correctamente con ID {inc_id}. "
-            f"Tipo: {tipo}. {descripcion.strip()}.{dirs_msg}{zonas_msg}"
+            f"Tipo: {tipo}. {descripcion.strip()}.{dirs_msg}{zonas_msg}{parte_msg}"
         )
     except Exception:
         return "Error al crear la incidencia. Por favor, intentelo de nuevo."
