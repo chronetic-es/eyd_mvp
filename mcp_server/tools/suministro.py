@@ -34,18 +34,28 @@ async def verificar_estado_suministro(contrato_id: int) -> str:
             f"Estado del contrato: {contrato['estado']}.",
         ]
 
-        # 2. Active incidents affecting this supply address
+        # 2. Active incidents affecting this supply address — either linked to the
+        #    exact address, or covering a zone (street / postal code / municipality)
+        #    that contains this address.
         incidencias = await conn.fetch(
             """
-            SELECT i.id, i.tipo, i.descripcion, i.fecha_inicio, i.hora_inicio,
+            SELECT DISTINCT i.id, i.tipo, i.descripcion, i.fecha_inicio, i.hora_inicio,
                    i.fecha_fin_prevista, i.hora_fin_prevista
             FROM incidencias i
-            JOIN incidencia_direcciones id ON i.id = id.incidencia_id
-            WHERE id.direccion_suministro_id = $1
-              AND i.fecha_fin IS NULL
+            LEFT JOIN incidencia_direcciones idr ON i.id = idr.incidencia_id
+            LEFT JOIN incidencia_zonas iz ON i.id = iz.incidencia_id
+            WHERE i.fecha_fin IS NULL
+              AND (
+                  idr.direccion_suministro_id = $1
+                  OR (iz.ambito = 'Calle'
+                      AND LOWER(TRIM($2)) = LOWER(TRIM(iz.valor))
+                      AND (iz.municipio IS NULL OR LOWER(iz.municipio) = LOWER($4)))
+                  OR (iz.ambito = 'Codigo_postal' AND iz.valor = $3)
+                  OR (iz.ambito = 'Municipio' AND LOWER(iz.valor) = LOWER($4))
+              )
             ORDER BY i.fecha_inicio DESC
             """,
-            contrato["dir_id"],
+            contrato["dir_id"], contrato["calle"], contrato["cod_postal"], contrato["municipio"],
         )
 
         if incidencias:

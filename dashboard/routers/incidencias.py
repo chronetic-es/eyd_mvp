@@ -4,10 +4,25 @@ from fastapi import APIRouter, Depends
 import crud
 from db import get_conn
 from errors import db_errors, not_found
-from models import DireccionLink, IncidenciaIn, IncidenciaUpdate
+from models import DireccionLink, IncidenciaIn, IncidenciaUpdate, ZonaLink
 from serializers import row, rows
 
 router = APIRouter(prefix="/api/incidencias", tags=["incidencias"])
+
+# Canonical "address falls within incident" rule, reused for the affected-subscribers query.
+# Params: $1 = incidencia_id. Joins against a supply address aliased `d`.
+_ZONA_MATCH = """
+    d.id IN (SELECT direccion_suministro_id FROM incidencia_direcciones WHERE incidencia_id = $1)
+    OR EXISTS (
+        SELECT 1 FROM incidencia_zonas iz WHERE iz.incidencia_id = $1 AND (
+            (iz.ambito = 'Calle'
+                AND LOWER(TRIM(d.calle)) = LOWER(TRIM(iz.valor))
+                AND (iz.municipio IS NULL OR LOWER(iz.municipio) = LOWER(d.municipio)))
+            OR (iz.ambito = 'Codigo_postal' AND d.cod_postal = iz.valor)
+            OR (iz.ambito = 'Municipio' AND LOWER(iz.valor) = LOWER(d.municipio))
+        )
+    )
+"""
 
 
 async def _with_relations(conn, inc) -> dict:
@@ -17,6 +32,10 @@ async def _with_relations(conn, inc) -> dict:
         JOIN direcciones_suministro d ON idl.direccion_suministro_id = d.id
         WHERE idl.incidencia_id = $1
     """, inc["id"])
+    zones = await conn.fetch("""
+        SELECT id, ambito, valor, municipio
+        FROM incidencia_zonas WHERE incidencia_id = $1 ORDER BY id
+    """, inc["id"])
     work_orders = await conn.fetch("""
         SELECT id, numero_parte, estado, fecha, descripcion
         FROM partes_trabajo WHERE incidencia_id = $1 ORDER BY fecha DESC
@@ -25,6 +44,7 @@ async def _with_relations(conn, inc) -> dict:
         **row(inc),
         "active": inc["fecha_fin"] is None,
         "addresses": rows(addresses),
+        "zones": rows(zones),
         "work_orders": rows(work_orders),
     }
 
@@ -94,3 +114,46 @@ async def unlink_direccion(incidencia_id: int, direccion_id: int, conn=Depends(g
     """, incidencia_id, direccion_id)
     if result == "DELETE 0":
         not_found("Enlace")
+
+
+# ─── Affected zones (general scope) ──────────────────────
+
+@router.post("/{incidencia_id}/zonas", status_code=201)
+async def add_zona(incidencia_id: int, body: ZonaLink, conn=Depends(get_conn)):
+    municipio = body.municipio if body.ambito == "Calle" else None
+    async with db_errors(conflict_msg="Incidencia inexistente."):
+        await conn.execute("""
+            INSERT INTO incidencia_zonas (incidencia_id, ambito, valor, municipio)
+            VALUES ($1, $2, $3, $4)
+        """, incidencia_id, body.ambito, body.valor, municipio)
+    inc = await conn.fetchrow("SELECT * FROM incidencias WHERE id = $1", incidencia_id)
+    return await _with_relations(conn, inc)
+
+
+@router.delete("/{incidencia_id}/zonas/{zona_id}", status_code=204)
+async def remove_zona(incidencia_id: int, zona_id: int, conn=Depends(get_conn)):
+    result = await conn.execute(
+        "DELETE FROM incidencia_zonas WHERE id = $1 AND incidencia_id = $2",
+        zona_id, incidencia_id,
+    )
+    if result == "DELETE 0":
+        not_found("Zona")
+
+
+# ─── Affected subscribers (exact links + zone matching) ──
+
+@router.get("/{incidencia_id}/afectados")
+async def get_afectados(incidencia_id: int, conn=Depends(get_conn)):
+    if not await conn.fetchrow("SELECT 1 FROM incidencias WHERE id = $1", incidencia_id):
+        not_found("Incidencia")
+    afectados = await conn.fetch(f"""
+        SELECT DISTINCT c.id AS contrato_id, c.numero_contrato, c.estado AS estado_contrato,
+               e.id AS abonado_id, e.nombre, e.apellidos, e.telefono,
+               d.calle, d.numero, d.cod_postal, d.municipio
+        FROM contratos c
+        JOIN direcciones_suministro d ON c.direccion_suministro_id = d.id
+        JOIN entidades e ON c.entidad_id = e.id
+        WHERE {_ZONA_MATCH}
+        ORDER BY e.apellidos, e.nombre
+    """, incidencia_id)
+    return {"afectados": rows(afectados), "total": len(afectados)}

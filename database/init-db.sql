@@ -6,6 +6,7 @@
 -- Clean slate
 DROP TABLE IF EXISTS llamadas CASCADE;
 DROP TABLE IF EXISTS partes_trabajo CASCADE;
+DROP TABLE IF EXISTS incidencia_zonas CASCADE;
 DROP TABLE IF EXISTS incidencia_direcciones CASCADE;
 DROP TABLE IF EXISTS incidencias CASCADE;
 DROP TABLE IF EXISTS expedientes_corte CASCADE;
@@ -24,6 +25,7 @@ DROP TYPE IF EXISTS estado_incidencia;
 DROP TYPE IF EXISTS estado_parte;
 DROP TYPE IF EXISTS motivo_llamada;
 DROP TYPE IF EXISTS estado_llamada;
+DROP TYPE IF EXISTS ambito_incidencia;
 
 -- ============================================================
 -- ENUMS
@@ -38,6 +40,7 @@ CREATE TYPE estado_incidencia AS ENUM ('Abierta', 'En_progreso', 'Resuelta', 'Ce
 CREATE TYPE estado_parte AS ENUM ('Abierto', 'En_proceso', 'Cerrado');
 CREATE TYPE motivo_llamada AS ENUM ('Sin_suministro', 'Fuga', 'Consulta_factura', 'Reclamacion', 'Informacion', 'Otro');
 CREATE TYPE estado_llamada AS ENUM ('Completada', 'Escalada', 'Abandonada');
+CREATE TYPE ambito_incidencia AS ENUM ('Calle', 'Codigo_postal', 'Municipio');
 
 -- ============================================================
 -- TABLES
@@ -148,6 +151,19 @@ CREATE TABLE incidencia_direcciones (
     UNIQUE(incidencia_id, direccion_suministro_id)
 );
 
+-- 8b. INCIDENCIA_ZONAS — general affected areas (street / postal code / municipality)
+-- An incident affects any supply address that falls within one of these zones,
+-- in addition to the specific addresses linked above.
+CREATE TABLE incidencia_zonas (
+    id            SERIAL PRIMARY KEY,
+    incidencia_id INT NOT NULL REFERENCES incidencias(id) ON DELETE CASCADE,
+    ambito        ambito_incidencia NOT NULL,
+    valor         VARCHAR(200) NOT NULL,   -- street name, postal code, or municipality
+    municipio     VARCHAR(100)             -- scopes a street to a municipality (ambito='Calle')
+);
+
+CREATE INDEX idx_incidencia_zonas_inc ON incidencia_zonas(incidencia_id);
+
 -- 9. PARTES_TRABAJO — Work orders / tickets
 CREATE TABLE partes_trabajo (
     id              SERIAL PRIMARY KEY,
@@ -182,18 +198,21 @@ CREATE INDEX idx_llamadas_fecha ON llamadas(fecha_inicio);
 -- SEED DATA
 -- ============================================================
 
--- Entidades (6 subscribers)
+-- Entidades (7 subscribers)
+-- Entity 7 (Elena) lives on Calle del Rio but is NOT explicitly linked to any incident —
+-- she is matched to the street-wide leak purely via incidencia_zonas (zone matching demo).
 INSERT INTO entidades (id, nif, nombre, apellidos, telefono, dir_fiscal) VALUES
 (1, '12345678A', 'Maria',   'Garcia Lopez',      '600111222', 'Calle Mayor 15, 1o A, 28001 Villanueva'),
 (2, '23456789B', 'Jose',    'Rodriguez Perez',    '600333444', 'Av. Constitucion 42, 28002 Villanueva'),
 (3, '34567890C', 'Ana',     'Martinez Ruiz',      '600555666', 'Plaza de Espana 3, 28001 Villanueva'),
 (4, '45678901D', 'Carlos',  'Fernandez Diaz',     '600777888', 'Calle del Rio 8, 28002 Villanueva'),
 (5, '56789012E', 'Lucia',   'Sanchez Torres',     '600999000', 'Camino del Molino 5, 28010 Aldeanueva'),
-(6, '67890123F', 'Pedro',   'Gomez Navarro',      '601111222', 'Calle Nueva 10, 28001 Villanueva');
+(6, '67890123F', 'Pedro',   'Gomez Navarro',      '601111222', 'Calle Nueva 10, 28001 Villanueva'),
+(7, '78901234G', 'Elena',   'Ramos Vidal',        '602222333', 'Calle del Rio 12, 28002 Villanueva');
 
-SELECT setval('entidades_id_seq', 6);
+SELECT setval('entidades_id_seq', 7);
 
--- Direcciones de suministro (8 addresses)
+-- Direcciones de suministro (9 addresses)
 INSERT INTO direcciones_suministro (id, calle, numero, portal, planta, letra, cod_postal, municipio) VALUES
 (1, 'Calle Mayor',              '15', NULL,  '1', 'A', '28001', 'Villanueva'),
 (2, 'Calle Mayor',              '15', NULL,  '2', 'B', '28001', 'Villanueva'),
@@ -202,11 +221,12 @@ INSERT INTO direcciones_suministro (id, calle, numero, portal, planta, letra, co
 (5, 'Plaza de Espana',          '3',  NULL, NULL, '2',  '28001', 'Villanueva'),
 (6, 'Calle Olivos',             '22', NULL, NULL, NULL, '28003', 'Villanueva'),
 (7, 'Camino del Molino',        '5',  NULL, NULL, NULL, '28010', 'Aldeanueva'),
-(8, 'Calle Nueva',              '10', NULL, NULL, NULL, '28001', 'Villanueva');
+(8, 'Calle Nueva',              '10', NULL, NULL, NULL, '28001', 'Villanueva'),
+(9, 'Calle del Rio',            '12', NULL, NULL, NULL, '28002', 'Villanueva');
 
-SELECT setval('direcciones_suministro_id_seq', 8);
+SELECT setval('direcciones_suministro_id_seq', 9);
 
--- Contratos (7 contracts)
+-- Contratos (8 contracts)
 INSERT INTO contratos (id, numero_contrato, entidad_id, direccion_suministro_id, estado, fecha_alta, fecha_baja) VALUES
 (1, 'CTR-2020-001', 1, 1, 'Activo',     '2020-03-15', NULL),
 (2, 'CTR-2021-002', 2, 3, 'Activo',     '2021-06-01', NULL),
@@ -214,9 +234,10 @@ INSERT INTO contratos (id, numero_contrato, entidad_id, direccion_suministro_id,
 (4, 'CTR-2022-004', 3, 6, 'Activo',     '2022-09-20', NULL),
 (5, 'CTR-2023-005', 4, 4, 'Activo',     '2023-02-14', NULL),
 (6, 'CTR-2018-006', 5, 7, 'Activo',     '2018-11-05', NULL),
-(7, 'CTR-2020-008', 1, 2, 'Activo',     '2020-07-01', NULL);
+(7, 'CTR-2020-008', 1, 2, 'Activo',     '2020-07-01', NULL),
+(8, 'CTR-2024-009', 7, 9, 'Activo',     '2024-04-01', NULL);
 
-SELECT setval('contratos_id_seq', 7);
+SELECT setval('contratos_id_seq', 8);
 
 -- Contadores — meter readings
 INSERT INTO contadores (contrato_id, num_serie, fecha_alta, fecha_baja, lectura_m3, fecha_lectura) VALUES
@@ -228,7 +249,8 @@ INSERT INTO contadores (contrato_id, num_serie, fecha_alta, fecha_baja, lectura_
 (4, 'CNT-004-2022', '2022-09-20', NULL, 98.200,  '2026-03-01'),
 (5, 'CNT-005-2023', '2023-02-14', NULL, 67.400,  '2026-03-01'),
 (6, 'CNT-006-2018', '2018-11-05', NULL, 520.900, '2026-03-01'),
-(7, 'CNT-007-2020', '2020-07-01', NULL, 110.300, '2026-03-01');
+(7, 'CNT-007-2020', '2020-07-01', NULL, 110.300, '2026-03-01'),
+(8, 'CNT-008-2024', '2024-04-01', NULL, 41.600,  '2026-03-01');
 
 -- Historico de recibos
 -- Contract 1 (Maria) — all paid
@@ -295,12 +317,18 @@ INSERT INTO incidencias (id, tipo, fecha_inicio, hora_inicio, fecha_fin, hora_fi
 
 SELECT setval('incidencias_id_seq', 3);
 
--- Incidencia-direcciones (N:M links)
+-- Incidencia-direcciones (N:M links) — specific supply addresses
 INSERT INTO incidencia_direcciones (incidencia_id, direccion_suministro_id) VALUES
 (1, 3),   -- Fuga affects Av. Constitucion 42 (Jose)
 (1, 4),   -- Fuga affects Calle del Rio 8 (Carlos)
 (2, 6),   -- Corte programado affects Calle Olivos 22 (Ana house)
 (3, 7);   -- Averia affected Camino del Molino 5 (Lucia)
+
+-- Incidencia-zonas — general affected areas. The Calle del Rio leak (incident 1) is
+-- declared street-wide, so it also reaches Calle del Rio 12 (Elena, contract 8), which
+-- has NO explicit address link above — proving zone-based matching.
+INSERT INTO incidencia_zonas (incidencia_id, ambito, valor, municipio) VALUES
+(1, 'Calle', 'Calle del Rio', 'Villanueva');
 
 -- Partes de trabajo
 INSERT INTO partes_trabajo (id, numero_parte, direccion_suministro_id, incidencia_id, fecha, estado, descripcion) VALUES
@@ -317,3 +345,132 @@ INSERT INTO llamadas (telefono, fecha_inicio, fecha_fin, resumen_ia, motivo_dete
 ('600555666', '2026-05-28 11:00:00', '2026-05-28 11:08:00',
  'Abonada Ana Martinez consulta sobre proximo recibo del contrato CTR-2022-004. Se informa que el recibo del periodo 2026-T1 esta pagado.',
  'Consulta_factura', FALSE, 'Completada');
+
+-- ============================================================
+-- SEED DATA (ampliacion) — repertorio variado + 3 abonados nuevos
+-- Jorge Gimenez Forjan, Yago Diaz Justo, Alejandro Mosquera Torres.
+-- Escenarios pensados para demo:
+--   - Jorge: cliente al dia, vive en un municipio nuevo (Costa Nueva) con un
+--            corte programado de ambito municipal -> diagnostico "sin agua".
+--   - Yago:  problemas de pago (impagado + devuelto) y expediente de corte abierto.
+--   - Alejandro: dos contratos (vivienda + local industrial) -> flujo multicontrato,
+--            con un recibo pendiente (aun no vencido) y una averia activa en su calle.
+-- ============================================================
+
+-- Abonados nuevos (8, 9, 10)
+INSERT INTO entidades (id, nif, nombre, apellidos, telefono, dir_fiscal) VALUES
+(8,  '50112233J', 'Jorge',     'Gimenez Forjan',  '616310676', 'Avenida del Mar 7, 3o B, 28020 Costa Nueva'),
+(9,  '50223344K', 'Yago',      'Diaz Justo',      '600730544', 'Calle Luna 4, 28020 Costa Nueva'),
+(10, '50334455M', 'Alejandro', 'Mosquera Torres', '619637879', 'Gran Via 100, 5o C, 28001 Villanueva');
+
+SELECT setval('entidades_id_seq', 10);
+
+-- Direcciones de suministro nuevas (10-13)
+INSERT INTO direcciones_suministro (id, calle, numero, portal, planta, letra, cod_postal, municipio) VALUES
+(10, 'Avenida del Mar',              '7',   NULL, '3',  'B',  '28020', 'Costa Nueva'),
+(11, 'Calle Luna',                   '4',   NULL, NULL, NULL, '28020', 'Costa Nueva'),
+(12, 'Gran Via',                     '100', NULL, '5',  'C',  '28001', 'Villanueva'),
+(13, 'Poligono Industrial El Pinar', '15',  NULL, NULL, NULL, '28030', 'Villanueva');
+
+SELECT setval('direcciones_suministro_id_seq', 13);
+
+-- Contratos nuevos (9-12). Alejandro (entidad 10) tiene dos: vivienda y local.
+INSERT INTO contratos (id, numero_contrato, entidad_id, direccion_suministro_id, estado, fecha_alta, fecha_baja) VALUES
+(9,  'CTR-2025-010', 8,  10, 'Activo', '2025-03-10', NULL),
+(10, 'CTR-2024-011', 9,  11, 'Activo', '2024-07-22', NULL),
+(11, 'CTR-2021-012', 10, 12, 'Activo', '2021-05-05', NULL),
+(12, 'CTR-2023-013', 10, 13, 'Activo', '2023-10-01', NULL);
+
+SELECT setval('contratos_id_seq', 12);
+
+-- Contadores nuevos
+INSERT INTO contadores (contrato_id, num_serie, fecha_alta, fecha_baja, lectura_m3, fecha_lectura) VALUES
+(9,  'CNT-009-2025', '2025-03-10', NULL, 73.200,  '2026-03-01'),
+(9,  'CNT-009-2025', '2025-03-10', NULL, 60.800,  '2025-12-01'),
+(10, 'CNT-010-2024', '2024-07-22', NULL, 134.500, '2026-03-01'),
+(11, 'CNT-011-2021', '2021-05-05', NULL, 388.100, '2026-03-01'),
+(11, 'CNT-011-2021', '2021-05-05', NULL, 370.400, '2025-12-01'),
+(12, 'CNT-012-2023', '2023-10-01', NULL, 1540.700,'2026-03-01');
+
+-- Recibos nuevos (ids por secuencia; no se fijan manualmente)
+-- Jorge (contract 9) — al dia
+INSERT INTO historico_recibos (contrato_id, periodo, importe, estado, forma_pago, fecha_emision, fecha_vencimiento) VALUES
+(9, '2025-T4', 61.20, 'Pagado', 'Domiciliado', '2025-12-01', '2025-12-31'),
+(9, '2026-T1', 58.90, 'Pagado', 'Domiciliado', '2026-03-01', '2026-03-31');
+
+-- Yago (contract 10) — moroso: impagado + devuelto
+INSERT INTO historico_recibos (contrato_id, periodo, importe, estado, forma_pago, fecha_emision, fecha_vencimiento) VALUES
+(10, '2025-T3', 74.10, 'Pagado',   'Domiciliado', '2025-09-01', '2025-09-30'),
+(10, '2025-T4', 88.40, 'Impagado', 'Domiciliado', '2025-12-01', '2025-12-31'),
+(10, '2026-T1', 91.20, 'Devuelto', 'Domiciliado', '2026-03-01', '2026-03-31');
+
+-- Alejandro vivienda (contract 11) — pagado + uno pendiente (aun no vencido)
+INSERT INTO historico_recibos (contrato_id, periodo, importe, estado, forma_pago, fecha_emision, fecha_vencimiento) VALUES
+(11, '2026-T1', 80.30, 'Pagado',    'Domiciliado', '2026-03-01', '2026-03-31'),
+(11, '2026-T2', 84.10, 'Pendiente', 'Domiciliado', '2026-06-01', '2026-06-30');
+
+-- Alejandro local industrial (contract 12) — consumo alto, pagado + pendiente
+INSERT INTO historico_recibos (contrato_id, periodo, importe, estado, forma_pago, fecha_emision, fecha_vencimiento) VALUES
+(12, '2026-T1', 342.60, 'Pagado',    'Transferencia', '2026-03-01', '2026-03-31'),
+(12, '2026-T2', 358.90, 'Pendiente', 'Transferencia', '2026-06-01', '2026-06-30');
+
+-- Expediente de corte nuevo (3) — Yago, recien abierto (Pendiente), sin fecha de corte aun.
+-- Referencia al recibo impagado por subconsulta (robusto frente a ids de secuencia).
+INSERT INTO expedientes_corte (id, contrato_id, recibo_id, fecha_apertura, fecha_corte, estado, importe_deuda) VALUES
+(3, 10,
+ (SELECT id FROM historico_recibos WHERE contrato_id = 10 AND periodo = '2025-T4'),
+ '2026-04-01', NULL, 'Pendiente', 179.60);
+
+SELECT setval('expedientes_corte_id_seq', 3);
+
+-- Incidencias nuevas (4, 5)
+-- 4. Corte programado de ambito MUNICIPAL en Costa Nueva -> afecta a Jorge y Yago por zona.
+INSERT INTO incidencias (id, tipo, fecha_inicio, hora_inicio, fecha_fin, hora_fin, fecha_fin_prevista, hora_fin_prevista, descripcion) VALUES
+(4, 'Corte_programado', '2026-06-18', '07:00', NULL, NULL, '2026-06-18', '15:00',
+ 'Corte programado por mejora de la red de distribucion en todo el municipio de Costa Nueva.');
+
+-- 5. Averia activa en Gran Via (Villanueva) -> afecta a la vivienda de Alejandro (direccion concreta 12).
+INSERT INTO incidencias (id, tipo, fecha_inicio, hora_inicio, fecha_fin, hora_fin, fecha_fin_prevista, hora_fin_prevista, descripcion) VALUES
+(5, 'Averia', '2026-06-16', '12:30', NULL, NULL, '2026-06-17', '20:00',
+ 'Averia en valvula reguladora de la Gran Via. Baja presion en la zona.');
+
+SELECT setval('incidencias_id_seq', 5);
+
+-- Enlaces de las incidencias nuevas
+INSERT INTO incidencia_direcciones (incidencia_id, direccion_suministro_id) VALUES
+(5, 12);   -- Averia Gran Via afecta a Gran Via 100 (Alejandro vivienda)
+
+INSERT INTO incidencia_zonas (incidencia_id, ambito, valor, municipio) VALUES
+(4, 'Municipio', 'Costa Nueva', NULL);   -- corte programado a todo Costa Nueva
+
+-- Partes de trabajo nuevos (3, 4)
+INSERT INTO partes_trabajo (id, numero_parte, direccion_suministro_id, incidencia_id, fecha, estado, descripcion) VALUES
+(3, 'PT-2026-0003', 10, 4, '2026-06-17', 'Abierto',   'Preparacion del corte programado de red en Costa Nueva.'),
+(4, 'PT-2026-0004', 12, 5, '2026-06-16', 'En_proceso','Sustitucion de valvula reguladora en Gran Via.');
+
+SELECT setval('partes_trabajo_id_seq', 4);
+
+-- Llamadas nuevas — incluyen los telefonos de los abonados nuevos (para el flujo {{user_number}})
+-- y variedad de motivos/estados/fechas para los graficos del panel.
+INSERT INTO llamadas (telefono, fecha_inicio, fecha_fin, resumen_ia, motivo_detectado, human_handoff, estado) VALUES
+('616310676', '2026-06-16 10:05:00', '2026-06-16 10:11:00',
+ 'Abonado Jorge Gimenez consulta por falta de agua. Se le informa del corte programado en Costa Nueva previsto para el 18 de junio de 07:00 a 15:00.',
+ 'Sin_suministro', FALSE, 'Completada'),
+('600730544', '2026-06-15 17:40:00', '2026-06-15 17:52:00',
+ 'Abonado Yago Diaz reclama por recibos impagados y expediente de corte. Solicita aplazamiento de pago. Se deriva a un agente humano.',
+ 'Reclamacion', TRUE, 'Escalada'),
+('619637879', '2026-06-14 09:30:00', '2026-06-14 09:39:00',
+ 'Abonado Alejandro Mosquera consulta el estado de los recibos de su local industrial. Se confirma recibo 2026-T1 pagado y 2026-T2 pendiente de vencimiento.',
+ 'Consulta_factura', FALSE, 'Completada'),
+('619637879', '2026-06-16 13:10:00', '2026-06-16 13:18:00',
+ 'Abonado Alejandro Mosquera reporta baja presion en Gran Via. Se confirma averia activa y parte de trabajo PT-2026-0004 en curso.',
+ 'Sin_suministro', FALSE, 'Completada'),
+('600730544', '2026-06-10 12:00:00', NULL,
+ 'Llamada abandonada por el abonado antes de completar la identificacion.',
+ 'Otro', FALSE, 'Abandonada'),
+('600111222', '2026-06-12 16:20:00', '2026-06-12 16:27:00',
+ 'Abonada Maria Garcia solicita informacion sobre tarifas y formas de pago. Se facilita la informacion general.',
+ 'Informacion', FALSE, 'Completada'),
+('601111222', '2026-06-09 11:15:00', '2026-06-09 11:23:00',
+ 'Abonado Pedro Gomez informa de una posible fuga en la via publica cerca de Calle Nueva. Se registra la incidencia para revision.',
+ 'Fuga', FALSE, 'Completada');

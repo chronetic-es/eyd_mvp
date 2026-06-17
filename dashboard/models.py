@@ -164,6 +164,15 @@ class DireccionLink(BaseModel):
     direccion_suministro_id: int
 
 
+AmbitoIncidencia = Literal["Calle", "Codigo_postal", "Municipio"]
+
+
+class ZonaLink(BaseModel):
+    ambito: AmbitoIncidencia
+    valor: str = Field(min_length=1, max_length=200)
+    municipio: Optional[str] = Field(default=None, max_length=100)
+
+
 # ─── PARTES DE TRABAJO ───────────────────────────────────
 class ParteIn(BaseModel):
     direccion_suministro_id: Optional[int] = None

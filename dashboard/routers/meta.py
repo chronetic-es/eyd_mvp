@@ -14,6 +14,7 @@ ENUMS = {
         "Sin_suministro", "Fuga", "Consulta_factura", "Reclamacion", "Informacion", "Otro"
     ],
     "estado_llamada": ["Completada", "Escalada", "Abandonada"],
+    "ambito_incidencia": ["Calle", "Codigo_postal", "Municipio"],
 }
 
 

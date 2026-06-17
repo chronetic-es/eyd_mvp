@@ -17,10 +17,12 @@ async def consultar_incidencias_activas(zona: str = "", direccion: str = "") -> 
                 SELECT DISTINCT i.id, i.tipo, i.descripcion, i.fecha_inicio, i.hora_inicio,
                        i.fecha_fin_prevista, i.hora_fin_prevista
                 FROM incidencias i
-                JOIN incidencia_direcciones id ON i.id = id.incidencia_id
-                JOIN direcciones_suministro d ON id.direccion_suministro_id = d.id
+                LEFT JOIN incidencia_direcciones idl ON i.id = idl.incidencia_id
+                LEFT JOIN direcciones_suministro d ON idl.direccion_suministro_id = d.id
+                LEFT JOIN incidencia_zonas iz ON i.id = iz.incidencia_id
                 WHERE i.fecha_fin IS NULL
-                  AND (LOWER(d.calle) LIKE LOWER($1) OR LOWER(d.municipio) LIKE LOWER($1))
+                  AND (LOWER(d.calle) LIKE LOWER($1) OR LOWER(d.municipio) LIKE LOWER($1)
+                       OR LOWER(iz.valor) LIKE LOWER($1) OR LOWER(iz.municipio) LIKE LOWER($1))
                 ORDER BY i.fecha_inicio DESC
                 """,
                 termino,
@@ -32,10 +34,13 @@ async def consultar_incidencias_activas(zona: str = "", direccion: str = "") -> 
                 SELECT DISTINCT i.id, i.tipo, i.descripcion, i.fecha_inicio, i.hora_inicio,
                        i.fecha_fin_prevista, i.hora_fin_prevista
                 FROM incidencias i
-                JOIN incidencia_direcciones id ON i.id = id.incidencia_id
-                JOIN direcciones_suministro d ON id.direccion_suministro_id = d.id
+                LEFT JOIN incidencia_direcciones idl ON i.id = idl.incidencia_id
+                LEFT JOIN direcciones_suministro d ON idl.direccion_suministro_id = d.id
+                LEFT JOIN incidencia_zonas iz ON i.id = iz.incidencia_id
                 WHERE i.fecha_fin IS NULL
-                  AND LOWER(d.municipio) LIKE LOWER($1)
+                  AND (LOWER(d.municipio) LIKE LOWER($1)
+                       OR (iz.ambito = 'Municipio' AND LOWER(iz.valor) LIKE LOWER($1))
+                       OR (iz.ambito = 'Calle' AND LOWER(iz.municipio) LIKE LOWER($1)))
                 ORDER BY i.fecha_inicio DESC
                 """,
                 termino,
@@ -134,9 +139,25 @@ async def obtener_detalle_incidencia(incidencia_id: int) -> str:
                 if d["letra"]:
                     partes.append(d["letra"])
                 dirs.append(", ".join(partes) + f", {d['cod_postal']} {d['municipio']}")
-            resultado.append(f"Direcciones afectadas: " + "; ".join(dirs) + ".")
+            resultado.append(f"Direcciones concretas afectadas: " + "; ".join(dirs) + ".")
         else:
-            resultado.append("No tiene direcciones afectadas registradas.")
+            resultado.append("No tiene direcciones concretas afectadas registradas.")
+
+        # Affected zones (general scope)
+        zonas = await conn.fetch(
+            "SELECT ambito, valor, municipio FROM incidencia_zonas WHERE incidencia_id = $1",
+            incidencia_id,
+        )
+        if zonas:
+            descs = []
+            for z in zonas:
+                if z["ambito"] == "Calle":
+                    descs.append(f"calle {z['valor']}" + (f" ({z['municipio']})" if z["municipio"] else ""))
+                elif z["ambito"] == "Codigo_postal":
+                    descs.append(f"codigo postal {z['valor']}")
+                else:
+                    descs.append(f"municipio {z['valor']}")
+            resultado.append("Ambito general afectado: " + "; ".join(descs) + ".")
 
         return " ".join(resultado)
     except Exception:
@@ -150,10 +171,18 @@ async def crear_incidencia(
     tipo: str,
     descripcion: str,
     direccion_suministro_ids: str = "",
+    zona_calle: str = "",
+    zona_cod_postal: str = "",
+    zona_municipio: str = "",
 ) -> str:
     """Crea una nueva incidencia en el sistema.
     tipo: Averia, Corte_programado, Corte_impago, Fuga.
-    direccion_suministro_ids: IDs de direcciones afectadas separados por coma (opcional)."""
+    direccion_suministro_ids: IDs de direcciones concretas afectadas separados por coma (opcional).
+    Para una incidencia de ambito general (afecta a todos los abonados de una zona), indica:
+    zona_calle: nombre de la calle afectada (ej: 'Calle del Rio'); usa zona_municipio para acotarla.
+    zona_cod_postal: codigo postal afectado (ej: '28002').
+    zona_municipio: municipio afectado (ej: 'Villanueva'); si se indica sin zona_calle, afecta a todo el municipio.
+    Cualquier abonado cuya direccion de suministro caiga dentro de la zona quedara afectado."""
     error = validar_tipo_incidencia(tipo)
     if error:
         return error
@@ -168,6 +197,15 @@ async def crear_incidencia(
             dir_ids = [int(x.strip()) for x in direccion_suministro_ids.split(",") if x.strip()]
         except ValueError:
             return "direccion_suministro_ids debe ser una lista de IDs separados por coma."
+
+    # Build affected zones (ambito, valor, municipio)
+    zonas = []
+    if zona_calle.strip():
+        zonas.append(("Calle", zona_calle.strip(), zona_municipio.strip() or None))
+    if zona_cod_postal.strip():
+        zonas.append(("Codigo_postal", zona_cod_postal.strip(), None))
+    if zona_municipio.strip() and not zona_calle.strip():
+        zonas.append(("Municipio", zona_municipio.strip(), None))
 
     conn = await obtener_conexion_db()
     try:
@@ -198,13 +236,25 @@ async def crear_incidencia(
                     inc_id, did,
                 )
 
+            for ambito, valor, municipio in zonas:
+                await conn.execute(
+                    "INSERT INTO incidencia_zonas (incidencia_id, ambito, valor, municipio) VALUES ($1, $2, $3, $4)",
+                    inc_id, ambito, valor, municipio,
+                )
+
         dirs_msg = ""
         if dir_ids:
-            dirs_msg = f" Se han vinculado {len(dir_ids)} direccion{'es' if len(dir_ids) > 1 else ''} afectada{'s' if len(dir_ids) > 1 else ''}."
+            dirs_msg = f" Se han vinculado {len(dir_ids)} direccion{'es' if len(dir_ids) > 1 else ''} concreta{'s' if len(dir_ids) > 1 else ''}."
+        zonas_msg = ""
+        if zonas:
+            desc_zonas = "; ".join(
+                f"{a.lower()} {v}" + (f" ({m})" if m else "") for a, v, m in zonas
+            )
+            zonas_msg = f" Ambito general afectado: {desc_zonas}."
 
         return (
             f"Incidencia creada correctamente con ID {inc_id}. "
-            f"Tipo: {tipo}. {descripcion.strip()}.{dirs_msg}"
+            f"Tipo: {tipo}. {descripcion.strip()}.{dirs_msg}{zonas_msg}"
         )
     except Exception:
         return "Error al crear la incidencia. Por favor, intentelo de nuevo."

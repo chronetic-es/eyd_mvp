@@ -5,8 +5,14 @@ import { store } from '../store.js';
 import { openForm } from '../forms.js';
 import {
     sectionHeader, badge, fmtDate, esc, humanize,
-    toast, confirmDialog, addrLabel,
+    toast, confirmDialog, addrLabel, openModal, closeModal,
 } from '../ui.js';
+
+function zonaLabel(z) {
+    if (z.ambito === 'Calle') return `Calle: ${z.valor}${z.municipio ? ' · ' + z.municipio : ''}`;
+    if (z.ambito === 'Codigo_postal') return `C.P.: ${z.valor}`;
+    return `Municipio: ${z.valor}`;
+}
 
 let rootEl = null;
 let filterActive = 'all';
@@ -32,7 +38,12 @@ async function reload() {
             <span class="inline-flex items-center gap-1 bg-white border border-gray-200 rounded-full pl-2.5 pr-1 py-0.5 text-xs mr-1 mb-1">
                 ${esc(addrLabel(a))}
                 <button class="text-gray-400 hover:text-red-500 w-4 h-4 leading-none" data-unlink="${inc.id}:${a.id}" title="Quitar">×</button>
-            </span>`).join('') || '<span class="text-xs text-gray-400">Sin direcciones</span>';
+            </span>`).join('') || '<span class="text-xs text-gray-400">Sin direcciones concretas</span>';
+        const zonas = (inc.zones || []).map(z => `
+            <span class="inline-flex items-center gap-1 bg-cyan-50 border border-cyan-200 text-cyan-800 rounded-full pl-2.5 pr-1 py-0.5 text-xs mr-1 mb-1">
+                ${esc(zonaLabel(z))}
+                <button class="text-cyan-400 hover:text-red-500 w-4 h-4 leading-none" data-unzona="${inc.id}:${z.id}" title="Quitar">×</button>
+            </span>`).join('') || '<span class="text-xs text-gray-400">Sin zonas</span>';
         const wos = inc.work_orders.map(w =>
             `<span class="inline-flex items-center gap-1 text-xs mr-2">${esc(w.numero_parte)} ${badge(w.estado)}</span>`
         ).join('') || '<span class="text-xs text-gray-400">Sin partes</span>';
@@ -50,10 +61,13 @@ async function reload() {
             </div>
             <p class="mt-2 text-sm text-gray-700">${esc(inc.descripcion)}</p>
             <div class="mt-3 text-xs text-gray-500"><strong>${finStr}</strong></div>
-            <div class="mt-2"><span class="text-xs text-gray-400 mr-1">Direcciones:</span>${addrs}
+            <div class="mt-2"><span class="text-xs text-gray-400 mr-1">Direcciones concretas:</span>${addrs}
                 <button class="btn btn-ghost btn-sm" data-addaddr="${inc.id}">+ Añadir</button></div>
+            <div class="mt-2"><span class="text-xs text-gray-400 mr-1">Zonas afectadas:</span>${zonas}
+                <button class="btn btn-ghost btn-sm" data-addzona="${inc.id}">+ Añadir</button></div>
             <div class="mt-2"><span class="text-xs text-gray-400 mr-1">Partes:</span>${wos}</div>
             <div class="mt-3 flex flex-wrap gap-2 pt-3 border-t border-black/5">
+                <button class="btn btn-secondary btn-sm" data-afectados="${inc.id}">Ver afectados</button>
                 ${inc.active ? `<button class="btn btn-secondary btn-sm" data-close="${inc.id}">Cerrar</button>` : ''}
                 <button class="btn btn-secondary btn-sm" data-parte="${inc.id}">Generar parte</button>
                 <button class="btn btn-secondary btn-sm" data-edit="${inc.id}">Editar</button>
@@ -72,7 +86,69 @@ function bindActions(incidents) {
     rootEl.querySelectorAll('[data-close]').forEach(b => b.onclick = () => quickClose(b.dataset.close));
     rootEl.querySelectorAll('[data-addaddr]').forEach(b => b.onclick = () => addAddress(b.dataset.addaddr));
     rootEl.querySelectorAll('[data-unlink]').forEach(b => b.onclick = () => unlinkAddress(b.dataset.unlink));
+    rootEl.querySelectorAll('[data-addzona]').forEach(b => b.onclick = () => addZona(b.dataset.addzona));
+    rootEl.querySelectorAll('[data-unzona]').forEach(b => b.onclick = () => removeZona(b.dataset.unzona));
+    rootEl.querySelectorAll('[data-afectados]').forEach(b => b.onclick = () => showAfectados(b.dataset.afectados));
     rootEl.querySelectorAll('[data-parte]').forEach(b => b.onclick = () => generateParte(find(b.dataset.parte)));
+}
+
+async function addZona(incId) {
+    const values = await openForm({
+        title: 'Añadir zona afectada',
+        submitLabel: 'Añadir',
+        fields: [
+            { name: 'ambito', label: 'Ambito', type: 'select', required: true, options: store.enums.ambito_incidencia || [] },
+            { name: 'valor', label: 'Valor', type: 'text', required: true, col: 'full',
+              help: 'Calle (ej: Calle del Rio), codigo postal (ej: 28002) o municipio (ej: Villanueva).' },
+            { name: 'municipio', label: 'Municipio (solo para Calle)', type: 'text',
+              help: 'Acota la calle a un municipio. Dejar vacio para C.P. o municipio.' },
+        ],
+    });
+    if (!values) return;
+    try {
+        await api.post(`/api/incidencias/${incId}/zonas`, values);
+        toast('Zona añadida.');
+        reload();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function removeZona(key) {
+    const [incId, zonaId] = key.split(':');
+    try {
+        await api.del(`/api/incidencias/${incId}/zonas/${zonaId}`);
+        toast('Zona quitada.');
+        reload();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function showAfectados(incId) {
+    let data;
+    try { data = await api.get(`/api/incidencias/${incId}/afectados`); }
+    catch (e) { toast(e.message, 'error'); return; }
+
+    openModal((box) => {
+        const rows = data.afectados.length ? data.afectados.map(a => `
+            <tr>
+                <td>${esc(a.nombre)} ${esc(a.apellidos)}</td>
+                <td class="font-mono text-xs">${esc(a.telefono)}</td>
+                <td class="font-mono text-xs">${esc(a.numero_contrato)}</td>
+                <td class="text-sm">${esc(addrLabel(a))}</td>
+            </tr>`).join('')
+            : `<tr><td colspan="4" class="px-4 py-8 text-center text-gray-400 text-sm">Ningun abonado afectado.</td></tr>`;
+        box.innerHTML = `
+            <div class="px-6 py-4 border-b flex items-center justify-between">
+                <h3 class="text-lg font-semibold text-gray-800">Abonados afectados (${data.total})</h3>
+                <button class="btn btn-ghost" data-close>✕</button>
+            </div>
+            <div class="px-6 py-4 max-h-[70vh] overflow-y-auto">
+                <p class="text-xs text-gray-500 mb-3">Incluye direcciones enlazadas explícitamente y las que caen dentro de las zonas declaradas.</p>
+                <div class="card overflow-hidden"><table class="data-table">
+                    <thead><tr><th>Abonado</th><th>Telefono</th><th>Contrato</th><th>Direccion suministro</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table></div>
+            </div>`;
+        box.querySelector('[data-close]').onclick = closeModal;
+    }, { wide: true });
 }
 
 async function openIncForm(inc = null) {
